@@ -257,49 +257,66 @@
           container.style.transform = '';
         }
 
+        function parseCurrentTranslateY() {
+          var m = (container.style.transform || '').match(/translateY\((-?[\d.]+)px\)/);
+          return m ? Math.abs(parseFloat(m[1])) : 0;
+        }
+
+        // Incremental adjustment. Reads the CURRENT on-screen rect (which
+        // already includes any applied transform) and ONLY adds more upward
+        // translation if the input has fallen below the visible area.
+        // Never resets / re-computes from original — that was causing the
+        // canvas to drift UP on every keystroke as iOS's predictive bar
+        // shrank visualViewport.
         function adjustForActiveInput() {
           var active = document.activeElement;
           if (!active || (active.tagName !== 'INPUT' && active.tagName !== 'TEXTAREA')) {
             clearTranslate();
             return;
           }
-          // Reset translate first so getBoundingClientRect gives unbiased numbers.
-          clearTranslate();
-          // After clearing transform, measure on next frame.
-          requestAnimationFrame(function () {
-            var rect      = active.getBoundingClientRect();
-            var vv        = window.visualViewport;
-            var visibleH  = vv ? vv.height : window.innerHeight;
-            var keyboardOpen = (window.innerHeight - visibleH) > 100;
 
-            // If the keyboard isn't actually open, do nothing — likely a
-            // desktop browser or a non-keyboard focus event.
-            if (!keyboardOpen) {
-              window.scrollTo(0, 0);
-              return;
-            }
-
-            // If the input is ALREADY visible above the keyboard, no need to
-            // translate at all.
-            var inputBottom = rect.top + rect.height;
-            var overflow    = inputBottom - visibleH + EXTRA_MARGIN;
-            if (overflow <= 0) {
-              window.scrollTo(0, 0);
-              return;
-            }
-
-            // We need SOME translation. Now compute caps:
-            //   1) Don't push input above KEEP_FROM_TOP * visibleH from screen top.
-            //   2) Don't translate more than ABSOLUTE_CAP_PX (no flying off).
-            var maxByTopRule  = Math.max(0, rect.top - visibleH * KEEP_FROM_TOP);
-            var translate     = Math.min(overflow, maxByTopRule, ABSOLUTE_CAP_PX);
-
-            if (translate > 0) {
-              container.style.transition = 'transform 0.2s ease';
-              container.style.transform  = 'translateY(' + (-translate) + 'px)';
-            }
+          var vv       = window.visualViewport;
+          var visibleH = vv ? vv.height : window.innerHeight;
+          var keyboardOpen = (window.innerHeight - visibleH) > 100;
+          if (!keyboardOpen) {
+            clearTranslate();
             window.scrollTo(0, 0);
-          });
+            return;
+          }
+
+          // rect = CURRENT on-screen rect (includes existing transform).
+          var rect    = active.getBoundingClientRect();
+          var current = parseCurrentTranslateY();
+
+          // If input is already comfortably visible, do nothing — this is
+          // the key fix that prevents drift on each keystroke.
+          if (rect.bottom <= visibleH - 4) {
+            window.scrollTo(0, 0);
+            return;
+          }
+
+          // Input is below the visible area — translate further up by the
+          // amount needed PLUS margin, on top of current translate.
+          var additional   = rect.bottom - visibleH + EXTRA_MARGIN;
+          var newTranslate = current + additional;
+
+          // Cap 1: absolute ceiling.
+          newTranslate = Math.min(newTranslate, ABSOLUTE_CAP_PX);
+
+          // Cap 2: don't push input top above KEEP_FROM_TOP * visibleH.
+          // After applying newTranslate, input top will be at
+          // (rect.top - (newTranslate - current)).
+          var minAllowedTop = visibleH * KEEP_FROM_TOP;
+          var topAfter      = rect.top - (newTranslate - current);
+          if (topAfter < minAllowedTop) {
+            newTranslate = Math.max(current, current + (rect.top - minAllowedTop));
+          }
+
+          if (Math.abs(newTranslate - current) > 1) {
+            container.style.transition = 'transform 0.2s ease';
+            container.style.transform  = 'translateY(' + (-newTranslate) + 'px)';
+          }
+          window.scrollTo(0, 0);
         }
 
         document.addEventListener('focusin', function (e) {
@@ -320,14 +337,13 @@
           }, 50);
         }, true);
 
-        // Keyboard height can change (e.g. predictive bar shows/hides) —
-        // recompute when visualViewport resizes.
-        if (window.visualViewport) {
-          window.visualViewport.addEventListener('resize', function () {
-            window.scrollTo(0, 0);
-            adjustForActiveInput();
-          });
-        }
+        // NOTE: We DELIBERATELY do NOT re-run adjustForActiveInput on
+        // visualViewport resize. Reason: on iOS Japanese IME, each character
+        // typed shrinks the visible area (kanji candidate bar grows), which
+        // would push the canvas further up on every keystroke. We lock the
+        // translation at focusin time and only release on focusout.
+        // (syncContainerSize is still re-run by the outer listener so the
+        // canvas itself keeps fitting the visible area.)
 
         // Belt-and-braces: any time browser tries to scroll the body, undo it.
         window.addEventListener('scroll', function () {
