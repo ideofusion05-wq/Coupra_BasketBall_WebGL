@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en-us">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <!-- NOTE: viewport-fit=cover REMOVED — was making canvas extend behind
+         the iOS Safari URL bar / notch. Without it, browser keeps content
+         within the safe area, so canvas renders fully visible. -->
+    <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="screen-orientation" content="portrait">
+    <title>Basket Ball Dunk</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body {
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #231F20;
+        -webkit-tap-highlight-color: transparent;
+        -webkit-touch-callout: none;
+        -webkit-user-select: none;
+        user-select: none;
+        touch-action: none;
+        overscroll-behavior: none;
+      }
+      #unity-container {
+        /* Container sized at runtime via JS (syncContainerSize) using
+           visualViewport — this is the ONLY way to correctly account for
+           iOS Safari's bottom URL bar, which is NOT included in
+           safe-area-inset-bottom. Defaults below are used until JS runs. */
+        position: fixed;
+        top:    env(safe-area-inset-top, 0);
+        left:   env(safe-area-inset-left, 0);
+        right:  env(safe-area-inset-right, 0);
+        height: 100dvh;
+        background: #231F20;
+      }
+      #unity-canvas {
+        width: 100% !important;
+        height: 100% !important;
+        display: block;
+        background: #231F20;
+        outline: none;
+      }
+      #unity-loading-bar {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        display: none;
+        text-align: center;
+        color: #fff;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      }
+      #unity-progress-bar-empty {
+        width: 60vw;
+        max-width: 320px;
+        height: 14px;
+        margin: 12px auto 0;
+        background: rgba(255,255,255,0.15);
+        border-radius: 8px;
+        overflow: hidden;
+      }
+      #unity-progress-bar-full {
+        width: 0%;
+        height: 100%;
+        background: #fff;
+        transition: width 0.15s ease;
+      }
+      #unity-warning {
+        position: absolute;
+        left: 50%;
+        top: 12px;
+        transform: translate(-50%, 0);
+        background: rgba(0,0,0,0.6);
+        color: #fff;
+        padding: 8px 12px;
+        border-radius: 6px;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        font-size: 13px;
+        display: none;
+        z-index: 10;
+      }
+      #rotate-overlay {
+        position: fixed;
+        inset: 0;
+        background: #000;
+        color: #fff;
+        z-index: 9999;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        flex-direction: column;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        text-align: center;
+        padding: 24px;
+      }
+      #rotate-overlay .icon {
+        font-size: 48px;
+        margin-bottom: 16px;
+        animation: rotate-hint 1.6s ease-in-out infinite;
+      }
+      @keyframes rotate-hint {
+        0%, 100% { transform: rotate(-90deg); }
+        50% { transform: rotate(0deg); }
+      }
+      @media (orientation: landscape) and (hover: none) and (pointer: coarse) {
+        #rotate-overlay { display: flex; }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="unity-container">
+      <canvas id="unity-canvas" tabindex="-1"></canvas>
+      <div id="unity-loading-bar">
+        <div>Loading…</div>
+        <div id="unity-progress-bar-empty">
+          <div id="unity-progress-bar-full"></div>
+        </div>
+      </div>
+      <div id="unity-warning"></div>
+    </div>
+    <div id="rotate-overlay">
+      <div class="icon">⟳</div>
+      <div><strong>Please rotate your device</strong></div>
+      <div style="opacity:0.7;margin-top:8px;font-size:14px;">This game is best played in portrait mode.</div>
+    </div>
+
+    <!-- GameBull dependencies: socket.io-client (battle leaderboard) + qrcode-generator (battle QR) -->
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js" crossorigin="anonymous"></script>
+
+    <script>
+      var container = document.querySelector("#unity-container");
+      var canvas = document.querySelector("#unity-canvas");
+      var loadingBar = document.querySelector("#unity-loading-bar");
+      var progressBarFull = document.querySelector("#unity-progress-bar-full");
+      var warningBanner = document.querySelector("#unity-warning");
+
+      function unityShowBanner(msg, type) {
+        warningBanner.innerHTML = msg;
+        warningBanner.style.display = "block";
+        if (type === 'error') warningBanner.style.background = "rgba(180,30,30,0.85)";
+        else if (type === 'warning') warningBanner.style.background = "rgba(180,140,30,0.85)";
+        setTimeout(function() { warningBanner.style.display = "none"; }, 5000);
+      }
+
+      var buildUrl = "Build";
+      var loaderUrl = buildUrl + "/build.loader.js";
+      var config = {
+        dataUrl: buildUrl + "/build.data.unityweb",
+        frameworkUrl: buildUrl + "/build.framework.js.unityweb",
+        codeUrl: buildUrl + "/build.wasm.unityweb",
+        streamingAssetsUrl: "StreamingAssets",
+        companyName: "ASN Games",
+        productName: "Basket Ball Dunk",
+        productVersion: "1.0.0",
+        showBanner: unityShowBanner,
+      };
+
+      var isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+      if (isMobile) {
+        // NOTE: viewport-fit=cover REMOVED — was making canvas overlap the
+        // iOS Safari URL bar / notch. Browser keeps content inside safe area now.
+        var meta = document.querySelector('meta[name="viewport"]');
+        if (meta) meta.setAttribute('content', 'width=device-width, height=device-height, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no');
+        config.devicePixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+      }
+
+      loadingBar.style.display = "block";
+
+      var script = document.createElement("script");
+      script.src = loaderUrl;
+      script.onload = function () {
+        createUnityInstance(canvas, config, function (progress) {
+          progressBarFull.style.width = (100 * progress) + "%";
+        }).then(function (unityInstance) {
+          loadingBar.style.display = "none";
+          window.unityInstance = unityInstance;
+        }).catch(function (message) {
+          alert(message);
+        });
+      };
+      document.body.appendChild(script);
+
+      // Compute the safe-area top offset in pixels (from CSS env()).
+      // We can't read env() directly in JS, so we use a probe element.
+      function getSafeTopPx() {
+        var probe = document.createElement('div');
+        probe.style.cssText = 'position:fixed;top:env(safe-area-inset-top,0);visibility:hidden;width:1px;height:1px;';
+        document.body.appendChild(probe);
+        var top = probe.getBoundingClientRect().top;
+        document.body.removeChild(probe);
+        return Math.max(0, top);
+      }
+
+      // Sync container size to the visible viewport area on every change.
+      // visualViewport.height is the ONLY reliable source for the available
+      // height on iOS Safari with the bottom URL bar — env(safe-area-inset-*)
+      // doesn't include URL bar height, only the home indicator gesture area.
+      function syncContainerSize() {
+        var vv      = window.visualViewport;
+        var visibleH = vv ? vv.height : window.innerHeight;
+        var safeTop = getSafeTopPx();
+        // Container starts at safe top and extends down by (visualViewport - safeTop).
+        // If a CSS transform is applied (keyboard handler), preserve it.
+        container.style.height = Math.max(0, visibleH - safeTop) + 'px';
+      }
+
+      function resizeCanvas() {
+        canvas.style.width  = container.clientWidth  + 'px';
+        canvas.style.height = container.clientHeight + 'px';
+      }
+
+      function syncAll() {
+        syncContainerSize();
+        resizeCanvas();
+      }
+
+      window.addEventListener('resize', syncAll);
+      window.addEventListener('orientationchange', function () { setTimeout(syncAll, 200); });
+      if (window.visualViewport) {
+        // Fires when iOS Safari's URL bar shows/hides, when keyboard opens, etc.
+        window.visualViewport.addEventListener('resize', syncAll);
+        window.visualViewport.addEventListener('scroll', syncAll);
+      }
+      syncAll();
+
+      document.addEventListener('gesturestart', function (e) { e.preventDefault(); });
+      document.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+
+      // ====================================================================
+      // Mobile keyboard handling
+      // ====================================================================
+      // When a Unity InputField gets focus on mobile, Unity creates a hidden
+      // HTML <input> overlay at the InputField's screen position. The mobile
+      // browser auto-scrolls the page (often pushing the ENTIRE Unity canvas
+      // off-screen) to bring this input into view. We intercept this:
+      //   1. Force window.scrollY back to 0 (undo browser auto-scroll).
+      //   2. Use visualViewport to detect keyboard height.
+      //   3. Translate the unity-container UP only enough to keep the input
+      //      visible just above the keyboard.
+      // ====================================================================
+      (function () {
+        if (!isMobile) return;
+        var FOCUS_DELAY_MS  = 300;   // wait for keyboard to finish appearing
+        var EXTRA_MARGIN    = 12;    // visual margin above keyboard
+        var ABSOLUTE_CAP_PX = 180;   // HARD ceiling on translation — prevents
+                                     // panel flying off the top of screen.
+        var KEEP_FROM_TOP   = 0.30;  // when translating, keep input at most
+                                     // this fraction of viewport from top.
+
+        function clearTranslate() {
+          container.style.transform = '';
+        }
+
+        function adjustForActiveInput() {
+          var active = document.activeElement;
+          if (!active || (active.tagName !== 'INPUT' && active.tagName !== 'TEXTAREA')) {
+            clearTranslate();
+            return;
+          }
+          // Reset translate first so getBoundingClientRect gives unbiased numbers.
+          clearTranslate();
+          // After clearing transform, measure on next frame.
+          requestAnimationFrame(function () {
+            var rect      = active.getBoundingClientRect();
+            var vv        = window.visualViewport;
+            var visibleH  = vv ? vv.height : window.innerHeight;
+            var keyboardOpen = (window.innerHeight - visibleH) > 100;
+
+            // If the keyboard isn't actually open, do nothing — likely a
+            // desktop browser or a non-keyboard focus event.
+            if (!keyboardOpen) {
+              window.scrollTo(0, 0);
+              return;
+            }
+
+            // If the input is ALREADY visible above the keyboard, no need to
+            // translate at all.
+            var inputBottom = rect.top + rect.height;
+            var overflow    = inputBottom - visibleH + EXTRA_MARGIN;
+            if (overflow <= 0) {
+              window.scrollTo(0, 0);
+              return;
+            }
+
+            // We need SOME translation. Now compute caps:
+            //   1) Don't push input above KEEP_FROM_TOP * visibleH from screen top.
+            //   2) Don't translate more than ABSOLUTE_CAP_PX (no flying off).
+            var maxByTopRule  = Math.max(0, rect.top - visibleH * KEEP_FROM_TOP);
+            var translate     = Math.min(overflow, maxByTopRule, ABSOLUTE_CAP_PX);
+
+            if (translate > 0) {
+              container.style.transition = 'transform 0.2s ease';
+              container.style.transform  = 'translateY(' + (-translate) + 'px)';
+            }
+            window.scrollTo(0, 0);
+          });
+        }
+
+        document.addEventListener('focusin', function (e) {
+          var t = e.target;
+          if (!t || (t.tagName !== 'INPUT' && t.tagName !== 'TEXTAREA')) return;
+          // Browser hasn't shown keyboard yet — wait a bit.
+          setTimeout(adjustForActiveInput, FOCUS_DELAY_MS);
+        }, true);
+
+        document.addEventListener('focusout', function () {
+          // Small delay so focus can move to another input without flicker.
+          setTimeout(function () {
+            var a = document.activeElement;
+            if (!a || (a.tagName !== 'INPUT' && a.tagName !== 'TEXTAREA')) {
+              clearTranslate();
+              window.scrollTo(0, 0);
+            }
+          }, 50);
+        }, true);
+
+        // Keyboard height can change (e.g. predictive bar shows/hides) —
+        // recompute when visualViewport resizes.
+        if (window.visualViewport) {
+          window.visualViewport.addEventListener('resize', function () {
+            window.scrollTo(0, 0);
+            adjustForActiveInput();
+          });
+        }
+
+        // Belt-and-braces: any time browser tries to scroll the body, undo it.
+        window.addEventListener('scroll', function () {
+          if (window.scrollY !== 0) window.scrollTo(0, 0);
+        }, { passive: true });
+      })();
+    </script>
+  </body>
+</html>
