@@ -207,36 +207,42 @@
         return Math.max(0, bottom);
       }
 
-      // Conservative container sizing — picks the MINIMUM of available
-      // size signals so the container NEVER overflows the visible area on
-      // any browser. Trade-off: when browser URL bar later retracts, there
-      // may be a small unused gap at the bottom (better than canvas bleed).
+      // Container sizing using visualViewport with browser-specific fallback.
       //
-      // Three signals checked:
-      //   1. visualViewport.height — most accurate visible area
-      //   2. window.innerHeight   — Chrome's layout viewport (excludes URL bar)
-      //   3. document.documentElement.clientHeight — root element height
-      // Use min() of all three to be safe.
+      // Per spec, visualViewport.offsetTop should report the URL bar height
+      // when URL bar is visible at the top. iOS Safari respects this. But
+      // Chrome Android sometimes reports 0 even when URL bar is visible,
+      // so position:fixed elements end up BEHIND the URL bar.
+      //
+      // Fix: on Android, when offsetTop is 0 but innerHeight > vv.height,
+      // fall back to (innerHeight - vv.height) as the implied URL bar offset.
+      // On iOS we trust vvOffsetTop (handles top + bottom URL bar correctly).
+      var isAndroid = /Android/i.test(navigator.userAgent);
+
       function syncContainerSize() {
         var vv = window.visualViewport;
         var safeTop    = getSafeTopPx();
         var safeBottom = getSafeBottomPx();
         var vvOffsetTop = (vv && vv.offsetTop) || 0;
+        var vvH = vv ? vv.height : window.innerHeight;
+        var winH = window.innerHeight;
+        var chromeOverhang = Math.max(0, winH - vvH);
 
-        // Minimum-height strategy: pick the SMALLEST viewport signal.
-        var candidates = [];
-        if (vv) candidates.push(vv.height);
-        candidates.push(window.innerHeight);
-        if (document.documentElement && document.documentElement.clientHeight) {
-          candidates.push(document.documentElement.clientHeight);
+        // Pick effective offset: trust vvOffsetTop normally; fall back to
+        // chromeOverhang on Android Chrome where vvOffsetTop is unreliable.
+        var effectiveOffsetTop = vvOffsetTop;
+        if (isAndroid && vvOffsetTop === 0 && chromeOverhang > 0) {
+          effectiveOffsetTop = chromeOverhang;
         }
-        var minH = Math.min.apply(null, candidates);
 
-        var topPx    = Math.max(safeTop, vvOffsetTop);
+        var topPx    = Math.max(safeTop, effectiveOffsetTop);
         var leftPx   = (vv && vv.offsetLeft) || 0;
         var widthPx  = (vv && vv.width) || window.innerWidth;
-        // Subtract safe area top adjustment + safe bottom.
-        var heightPx = minH - (topPx - vvOffsetTop) - safeBottom;
+        // Height = visible viewport - extra safe top adjustment - safe bottom.
+        // The "extra safe top adjustment" is only needed if safeTop pushed
+        // the container below the visual viewport's natural top.
+        var topAdjustment = Math.max(0, topPx - effectiveOffsetTop);
+        var heightPx = vvH - topAdjustment - safeBottom;
 
         container.style.top    = topPx    + 'px';
         container.style.left   = leftPx   + 'px';
