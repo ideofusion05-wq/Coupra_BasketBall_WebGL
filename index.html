@@ -207,30 +207,43 @@
         return Math.max(0, bottom);
       }
 
-      // Sync container size — ONLY override CSS if browser chrome (URL bar)
-      // is taking visible space beyond what safe-area-inset-* accounts for.
-      // For Chrome with URL bar at top: visualViewport.height < window.innerHeight.
-      // For iOS Safari with URL bar at bottom: visualViewport.height < window.innerHeight - safeBottom.
-      // In normal state (no chrome eating space), CSS top+bottom handles it.
+      // Sync container size using visualViewport for EVERYTHING.
+      // This bypasses all browser-specific layout-viewport quirks (Chrome's
+      // ICB sizing, Safari's URL bar overlap, etc.) by anchoring the container
+      // directly to the user-visible area.
+      //
+      // visualViewport API is supported by Chrome (mobile + desktop), Safari,
+      // Firefox — so this is reliable everywhere we care about.
       function syncContainerSize() {
         var vv = window.visualViewport;
-        if (!vv) { container.style.height = ''; container.style.bottom = ''; return; }
-
         var safeTop    = getSafeTopPx();
         var safeBottom = getSafeBottomPx();
-        var layoutAvailableH = window.innerHeight - safeTop - safeBottom;
-        var chromeOverhead = layoutAvailableH - vv.height;
 
-        if (chromeOverhead > 4) {
-          // Browser chrome (URL bar / keyboard area) is eating space — force
-          // explicit height. Anchored at safeTop, height = visualViewport.height.
-          container.style.bottom = 'auto';
-          container.style.height = Math.max(0, vv.height) + 'px';
-        } else {
-          // No chrome overhead — let CSS (top + bottom + safe-area-inset-*) do the work.
-          container.style.height = '';
+        if (!vv) {
+          // Old browser fallback — let CSS top + bottom env() handle it.
+          container.style.top = '';
+          container.style.left = '';
+          container.style.right = '';
           container.style.bottom = '';
+          container.style.width = '';
+          container.style.height = '';
+          return;
         }
+
+        // visualViewport.offsetTop = where visible area starts in layout viewport.
+        // Anchor at MAX of safeTop and offsetTop so we never render under notch.
+        var topPx    = Math.max(safeTop, vv.offsetTop || 0);
+        var leftPx   = Math.max(0,        vv.offsetLeft || 0);
+        // Height = visible height, minus home indicator if needed.
+        var widthPx  = vv.width;
+        var heightPx = vv.height - (topPx - (vv.offsetTop || 0)) - safeBottom;
+
+        container.style.top    = topPx    + 'px';
+        container.style.left   = leftPx   + 'px';
+        container.style.right  = 'auto';
+        container.style.bottom = 'auto';
+        container.style.width  = widthPx  + 'px';
+        container.style.height = Math.max(0, heightPx) + 'px';
       }
 
       function resizeCanvas() {
