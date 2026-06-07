@@ -207,36 +207,36 @@
         return Math.max(0, bottom);
       }
 
-      // Sync container size using visualViewport for EVERYTHING.
-      // This bypasses all browser-specific layout-viewport quirks (Chrome's
-      // ICB sizing, Safari's URL bar overlap, etc.) by anchoring the container
-      // directly to the user-visible area.
+      // Conservative container sizing — picks the MINIMUM of available
+      // size signals so the container NEVER overflows the visible area on
+      // any browser. Trade-off: when browser URL bar later retracts, there
+      // may be a small unused gap at the bottom (better than canvas bleed).
       //
-      // visualViewport API is supported by Chrome (mobile + desktop), Safari,
-      // Firefox — so this is reliable everywhere we care about.
+      // Three signals checked:
+      //   1. visualViewport.height — most accurate visible area
+      //   2. window.innerHeight   — Chrome's layout viewport (excludes URL bar)
+      //   3. document.documentElement.clientHeight — root element height
+      // Use min() of all three to be safe.
       function syncContainerSize() {
         var vv = window.visualViewport;
         var safeTop    = getSafeTopPx();
         var safeBottom = getSafeBottomPx();
+        var vvOffsetTop = (vv && vv.offsetTop) || 0;
 
-        if (!vv) {
-          // Old browser fallback — let CSS top + bottom env() handle it.
-          container.style.top = '';
-          container.style.left = '';
-          container.style.right = '';
-          container.style.bottom = '';
-          container.style.width = '';
-          container.style.height = '';
-          return;
+        // Minimum-height strategy: pick the SMALLEST viewport signal.
+        var candidates = [];
+        if (vv) candidates.push(vv.height);
+        candidates.push(window.innerHeight);
+        if (document.documentElement && document.documentElement.clientHeight) {
+          candidates.push(document.documentElement.clientHeight);
         }
+        var minH = Math.min.apply(null, candidates);
 
-        // visualViewport.offsetTop = where visible area starts in layout viewport.
-        // Anchor at MAX of safeTop and offsetTop so we never render under notch.
-        var topPx    = Math.max(safeTop, vv.offsetTop || 0);
-        var leftPx   = Math.max(0,        vv.offsetLeft || 0);
-        // Height = visible height, minus home indicator if needed.
-        var widthPx  = vv.width;
-        var heightPx = vv.height - (topPx - (vv.offsetTop || 0)) - safeBottom;
+        var topPx    = Math.max(safeTop, vvOffsetTop);
+        var leftPx   = (vv && vv.offsetLeft) || 0;
+        var widthPx  = (vv && vv.width) || window.innerWidth;
+        // Subtract safe area top adjustment + safe bottom.
+        var heightPx = minH - (topPx - vvOffsetTop) - safeBottom;
 
         container.style.top    = topPx    + 'px';
         container.style.left   = leftPx   + 'px';
@@ -264,6 +264,11 @@
         window.visualViewport.addEventListener('scroll', syncAll);
       }
       syncAll();
+      // Delayed re-syncs to catch late URL bar animations / Chrome's
+      // post-load address-bar adjustments on Android.
+      setTimeout(syncAll, 100);
+      setTimeout(syncAll, 500);
+      setTimeout(syncAll, 1500);
 
       document.addEventListener('gesturestart', function (e) { e.preventDefault(); });
       document.addEventListener('contextmenu', function (e) { e.preventDefault(); });
