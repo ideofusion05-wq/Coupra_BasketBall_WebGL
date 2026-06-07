@@ -27,15 +27,15 @@
         overscroll-behavior: none;
       }
       #unity-container {
-        /* Container sized at runtime via JS (syncContainerSize) using
-           visualViewport — this is the ONLY way to correctly account for
-           iOS Safari's bottom URL bar, which is NOT included in
-           safe-area-inset-bottom. Defaults below are used until JS runs. */
+        /* Uses top+bottom (no explicit height) so browser auto-calculates
+           the height = viewport - safeTop - safeBottom. JS overrides
+           bottom/height at runtime ONLY if browser chrome (URL bar) takes
+           extra space (iOS Safari bottom URL bar). */
         position: fixed;
         top:    env(safe-area-inset-top, 0);
         left:   env(safe-area-inset-left, 0);
         right:  env(safe-area-inset-right, 0);
-        height: 100dvh;
+        bottom: env(safe-area-inset-bottom, 0);
         background: #231F20;
       }
       #unity-canvas {
@@ -197,17 +197,40 @@
         return Math.max(0, top);
       }
 
-      // Sync container size to the visible viewport area on every change.
-      // visualViewport.height is the ONLY reliable source for the available
-      // height on iOS Safari with the bottom URL bar — env(safe-area-inset-*)
-      // doesn't include URL bar height, only the home indicator gesture area.
+      // Get the safe-area-inset-bottom in pixels (probe element).
+      function getSafeBottomPx() {
+        var probe = document.createElement('div');
+        probe.style.cssText = 'position:fixed;bottom:env(safe-area-inset-bottom,0);visibility:hidden;width:1px;height:1px;';
+        document.body.appendChild(probe);
+        var bottom = window.innerHeight - probe.getBoundingClientRect().bottom;
+        document.body.removeChild(probe);
+        return Math.max(0, bottom);
+      }
+
+      // Sync container size — ONLY override CSS if browser chrome (URL bar)
+      // is taking visible space beyond what safe-area-inset-* accounts for.
+      // For Chrome with URL bar at top: visualViewport.height < window.innerHeight.
+      // For iOS Safari with URL bar at bottom: visualViewport.height < window.innerHeight - safeBottom.
+      // In normal state (no chrome eating space), CSS top+bottom handles it.
       function syncContainerSize() {
-        var vv      = window.visualViewport;
-        var visibleH = vv ? vv.height : window.innerHeight;
-        var safeTop = getSafeTopPx();
-        // Container starts at safe top and extends down by (visualViewport - safeTop).
-        // If a CSS transform is applied (keyboard handler), preserve it.
-        container.style.height = Math.max(0, visibleH - safeTop) + 'px';
+        var vv = window.visualViewport;
+        if (!vv) { container.style.height = ''; container.style.bottom = ''; return; }
+
+        var safeTop    = getSafeTopPx();
+        var safeBottom = getSafeBottomPx();
+        var layoutAvailableH = window.innerHeight - safeTop - safeBottom;
+        var chromeOverhead = layoutAvailableH - vv.height;
+
+        if (chromeOverhead > 4) {
+          // Browser chrome (URL bar / keyboard area) is eating space — force
+          // explicit height. Anchored at safeTop, height = visualViewport.height.
+          container.style.bottom = 'auto';
+          container.style.height = Math.max(0, vv.height) + 'px';
+        } else {
+          // No chrome overhead — let CSS (top + bottom + safe-area-inset-*) do the work.
+          container.style.height = '';
+          container.style.bottom = '';
+        }
       }
 
       function resizeCanvas() {
