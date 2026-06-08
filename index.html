@@ -6,7 +6,7 @@
     <!-- NOTE: viewport-fit=cover REMOVED — was making canvas extend behind
          the iOS Safari URL bar / notch. Without it, browser keeps content
          within the safe area, so canvas renders fully visible. -->
-    <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no, interactive-widget=resizes-content">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="mobile-web-app-capable" content="yes">
@@ -176,7 +176,7 @@
         // NOTE: viewport-fit=cover REMOVED — was making canvas overlap the
         // iOS Safari URL bar / notch. Browser keeps content inside safe area now.
         var meta = document.querySelector('meta[name="viewport"]');
-        if (meta) meta.setAttribute('content', 'width=device-width, height=device-height, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no');
+        if (meta) meta.setAttribute('content', 'width=device-width, height=device-height, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no, interactive-widget=resizes-content');
         config.devicePixelRatio = Math.min(window.devicePixelRatio || 1, 2);
       }
 
