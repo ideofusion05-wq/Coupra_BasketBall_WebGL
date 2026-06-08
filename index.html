@@ -303,6 +303,14 @@
       // ====================================================================
       (function () {
         if (!isMobile) return;
+        // iOS Safari already auto-scrolls the focused input into view —
+        // adding our own translation on top doubles the shift. Skip on iOS.
+        var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+        if (isIOS) {
+          console.log("[Keyboard] iOS detected — using Safari native input scroll");
+          return;
+        }
+
         var FOCUS_DELAY_MS  = 300;   // wait for keyboard to finish appearing
         var EXTRA_MARGIN    = 12;    // visual margin above keyboard
         var ABSOLUTE_CAP_PX = 180;   // HARD ceiling on translation — prevents
